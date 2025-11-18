@@ -1,0 +1,205 @@
+[root@fileserver7 tmp]# cat /var/shellscript/quick_sync.sh
+LOCAL_MOUNT_PATH="/mnt/FileServerShared";
+REMOTE_PATH="";
+NAS_PATH="172.18.36.3::NAS3Shared";
+CRM_ID="/var/shellscript/crmid.txt";
+RET_VAL=0;
+TOTAL_FILE_SIZE=0;
+TOTAL_FILE_COUNT=0;
+OS_VERSION="`rpm -E %{rhel}`";
+
+if [ $# -eq 3 ]; then
+    START_FROM_ACCOUNT="$3"
+    echo "Starting from account: $START_FROM_ACCOUNT"
+fi
+
+function IS_IT_A_SHARED_FOLDER() {
+    SharedPath="$LOCAL_MOUNT_PATH/$ACCOUNT_NAME";
+    ERROR_MESG="";
+    RET_VAL=1;
+
+    SharedFolder="$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/daily_other_scans";
+    if [ ! -d $SharedFolder ];
+    then
+        ERROR_MESG="Missing daily_other_scans folder. ";
+        RET_VAL=0;
+    fi
+
+    SharedFolder="$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/ERA";
+    if [ ! -d $SharedFolder ];
+    then
+        ERROR_MESG="${ERROR_MESG}Missing ERA folder. ";
+        RET_VAL=0;
+    fi
+
+    SharedFolder="$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/Claims";
+    if [ ! -d $SharedFolder ];
+    then
+        ERROR_MESG="${ERROR_MESG}Missing Claims folder. ";
+        RET_VAL=0;
+    fi
+
+    return $RET_VAL;
+}
+
+function PROCESS_NEWFILE() {
+    FileSize=$(stat -c%s "$1");
+    TOTAL_FILE_SIZE=$(< /tmp/TOTAL_FILE_SIZE);
+    TOTAL_FILE_COUNT=$(< /tmp/TOTAL_FILE_COUNT);
+    TOTAL_FILE_SIZE=$(expr $TOTAL_FILE_SIZE + $FileSize);
+    TOTAL_FILE_COUNT=$(expr $TOTAL_FILE_COUNT + 1);
+    echo $TOTAL_FILE_SIZE > /tmp/TOTAL_FILE_SIZE
+    echo $TOTAL_FILE_COUNT > /tmp/TOTAL_FILE_COUNT
+    FullPath="$1";
+    BasePath="$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/";
+    RelativePath=${FullPath:${#BasePath}};
+    SourceRelativePath="$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/./$RelativePath"
+    chown 1000:1000 "$1"
+    chmod 777 "$1"
+    if [ $OS_VERSION -eq "7" ];
+    then
+        echo "# rsync -q --chmod=777 --exclude=\".*\" --mkpath --relative \"$SourceRelativePath\" \"$REMOTE_PATH/$ACCOUNT_NAME/\""
+        rsync -q --chmod=777 --exclude=".*" --mkpath --relative "$SourceRelativePath" "$REMOTE_PATH/$ACCOUNT_NAME/"
+    else
+        echo "# rsync -q --chmod=777 --chown=1000:1000 --exclude=\".*\" --mkpath --relative \"$SourceRelativePath\" \"$REMOTE_PATH/$ACCOUNT_NAME/\""
+        rsync -q --chmod=777 --chown=1000:1000 --exclude=".*" --mkpath --relative "$SourceRelativePath" "$REMOTE_PATH/$ACCOUNT_NAME/"
+    fi
+    echo "# rsync -q --chmod=777 --exclude=\".*\" --relative \"$SourceRelativePath\" \"$NAS_PATH/$ACCOUNT_NAME/\""
+    rsync -q --chmod=777 --exclude=".*" --relative "$SourceRelativePath" "$NAS_PATH/$ACCOUNT_NAME/"
+}
+
+function PERFORM_RSYNC() {
+    if [ ! -d "$1" ];
+    then
+        echo "# $1 is missing."
+        return 0;
+    fi
+
+    find "$1" -type f -mtime -3 -print0 | while IFS= read -r -d '' NewFile; do PROCESS_NEWFILE "$NewFile"; done
+}
+
+
+function QUICK_SYNC() {
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/Attachments/" "$REMOTE_PATH/$ACCOUNT_NAME/Attachments";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/BlackBoard/" "$REMOTE_PATH/$ACCOUNT_NAME/BlackBoard";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/Claims/" "$REMOTE_PATH/$ACCOUNT_NAME/Claims";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/CNM/" "$REMOTE_PATH/$ACCOUNT_NAME/CNM";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/config/" "$REMOTE_PATH/$ACCOUNT_NAME/config";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/daily_other_scans/" "$REMOTE_PATH/$ACCOUNT_NAME/daily_other_scans";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/DirectMessaging/" "$REMOTE_PATH/$ACCOUNT_NAME/DirectMessaging";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/ENSSTMNTS/" "$REMOTE_PATH/$ACCOUNT_NAME/ENSSTMNTS";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/ERA/" "$REMOTE_PATH/$ACCOUNT_NAME/ERA";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/fax/" "$REMOTE_PATH/$ACCOUNT_NAME/fax";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/HL7/" "$REMOTE_PATH/$ACCOUNT_NAME/HL7";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/patientinfo/" "$REMOTE_PATH/$ACCOUNT_NAME/patientinfo";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/Prescription/" "$REMOTE_PATH/$ACCOUNT_NAME/Prescription";
+
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/log/ENS/271/" "$REMOTE_PATH/$ACCOUNT_NAME/log/ENS/271";
+    PERFORM_RSYNC "$LOCAL_MOUNT_PATH/$ACCOUNT_NAME/log/HL7/" "$REMOTE_PATH/$ACCOUNT_NAME/log/HL7";
+    RET_VAL=1;
+    return 1;
+}
+
+if [ -z "$1" ];
+then
+    echo "Usage: sh quick_sync.sh /mnt/MainStorage/vs1shared 172.18.31.16::SlaveVS1Shared  > /tmp/quick_sync.txt"
+    exit 1;
+fi
+
+if [ ! -d "$1" ];
+then
+    echo "# Invalid Input $1. Unable to access the folder $1."
+    exit 1;
+fi
+
+LOCAL_MOUNT_PATH="$1";
+REMOTE_PATH="$2";
+
+Len=$((${#LOCAL_MOUNT_PATH}-1))
+if [ "${LOCAL_MOUNT_PATH:$Len:1}" == "/" ];
+then
+    LOCAL_MOUNT_PATH=${LOCAL_MOUNT_PATH::-1};
+fi
+
+Len=$((${#REMOTE_PATH}-1))
+if [ "${REMOTE_PATH:$Len:1}" == "/" ];
+then
+    REMOTE_PATH=${REMOTE_PATH::-1};
+fi
+
+echo $TOTAL_FILE_SIZE > /tmp/TOTAL_FILE_SIZE
+echo $TOTAL_FILE_COUNT > /tmp/TOTAL_FILE_COUNT
+
+for SharedPath in $LOCAL_MOUNT_PATH/*;
+do
+    ACCOUNT_NAME=$(basename $SharedPath);
+   
+    if [[ -n "$START_FROM_ACCOUNT" ]]; then
+        if [[ "$ACCOUNT_NAME" < "$START_FROM_ACCOUNT" ]]; then
+            echo "Skipping $ACCOUNT_NAME, as we start from $START_FROM_ACCOUNT."
+            continue;
+        fi
+    fi
+    
+    if [[ $ACCOUNT_NAME == *"inactive"* ]]; then
+        echo "# $ACCOUNT_NAME,$LOCAL_MOUNT_PATH,Inactive Shared Folder"
+        continue;
+    fi    
+
+   IS_IT_A_SHARED_FOLDER;
+    RET_VAL=$?
+    if [ $RET_VAL -ne 1 ];
+    then
+        echo "# $ACCOUNT_NAME,$LOCAL_MOUNT_PATH,Not a GlaceEMR Shared Folder."
+    else
+        echo "`date` $ACCOUNT_NAME - Starting to backup ${REMOTE_PATH}/$ACCOUNT_NAME."
+        QUICK_SYNC $ACCOUNT_NAME;
+        RET_VAL=$?
+        BACKUP_STATUS=1
+        echo "`date` $ACCOUNT_NAME - Finished backup for ${REMOTE_PATH}/${ACCOUNT_NAME}."            
+        echo "";
+        echo "";
+        BID=$( cat "$CRM_ID" | grep ^$ACCOUNT_NAME-Mirror= | awk -F'=' '{print $2}');      
+        WGETCRM="https://crm.glaceemr.com/Adaptor/CRMServerStatusUpdate.ashx?Action=SaveStatus&aid=10098&bid=$BID&db=$ACCOUNT_NAME-Mirror&fn=FileSystem&status=$BACKUP_STATUS&schedule=Daily"
+        echo $WGETCRM;
+        rm -f /tmp/db_crm.txt 2>&1 > /dev/null
+        ErrorInfo=$(wget -q -O /tmp/db_crm.txt "$WGETCRM");
+        ErrorCode=$?
+        if [ $ErrorCode -ne 0 ];
+        then
+            echo "[  `date`  ] $DB_NAME Error occurred in WGET. Error Code is $ErrorCode / $ErrorInfo"
+        fi
+        cat /tmp/db_crm.txt
+        echo "";
+
+        if [ $BACKUP_STATUS -eq 0 ];
+        then
+            echo "[  `date`  ] $ACCOUNT_NAME Backup failed Status=0";
+        else
+            echo "[  `date`  ] $ACCOUNT_NAME Finished backup for $REMOTE_PATH/$ACCOUNT_NAME.";
+        fi
+
+        if [ $RET_VAL -ne 1 ];
+        then
+            echo "# Error processing $ACCOUNT_NAME from ${REMOTE_PATH}/${ACCOUNT_NAME}."
+        fi
+    fi
+done;
+
+TOTAL_FILE_SIZE=$(< /tmp/TOTAL_FILE_SIZE);
+TOTAL_FILE_COUNT=$(< /tmp/TOTAL_FILE_COUNT);
+
+TOTAL_FILE_SIZE_KB=$(($TOTAL_FILE_SIZE / 1024));
+TOTAL_FILE_SIZE_MB=$(($TOTAL_FILE_SIZE / 1024 / 1024));
+TOTAL_FILE_SIZE_GB=$(($TOTAL_FILE_SIZE / 1024 / 1024 / 1024));
+
+
+
+echo "# Total files copied = $TOTAL_FILE_COUNT ( $TOTAL_FILE_SIZE Bytes, $TOTAL_FILE_SIZE_KB KB,  $TOTAL_FILE_SIZE_MB MB, $TOTAL_FILE_SIZE_GB GB )"
+date
+
+echo "";
+echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  FINISHED ON  [ `date` ] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>";
+echo "------------------------------------------------------------------------------------------------------------------";
+
+
