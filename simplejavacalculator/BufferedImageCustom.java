@@ -21,3 +21,4 @@ class BufferedImageCustom {
       return image;
    }       
 }
+
