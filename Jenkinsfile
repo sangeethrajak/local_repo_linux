@@ -2,9 +2,15 @@ pipeline {
     agent any
 
     stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t html-nginx-app .'
+                sh 'docker build -t html-nginx-app:latest .'
             }
         }
 
@@ -13,32 +19,15 @@ pipeline {
                 sh '''
                 docker stop nginx-html || true
                 docker rm nginx-html || true
-                docker run -d -p 8085:80 --name nginx-html html-nginx-app
+                docker run -d -p 8085:80 --name nginx-html html-nginx-app:latest
                 '''
-            }
-        }
-    }
-}
-pipeline {
-    agent any
-
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-
-        stage('Build') {
-            steps {
-                sh 'ls -l'
             }
         }
     }
 
     post {
-        success {
-            archiveArtifacts artifacts: '**/*', fingerprint: true
+        always {
+            archiveArtifacts artifacts: 'index.html,Dockerfile,Jenkinsfile', fingerprint: true
         }
     }
 }
