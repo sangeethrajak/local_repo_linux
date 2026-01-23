@@ -19,4 +19,27 @@ pipeline {
         }
     }
 }
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'ls -l'
+            }
+        }
+    }
+
+    post {
+        success {
+            archiveArtifacts artifacts: '**/*', fingerprint: true
+        }
+    }
+}
 
